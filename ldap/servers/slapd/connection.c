@@ -1109,6 +1109,14 @@ connection_read_ldap_data(Connection *conn, PRInt32 *err)
 	return ret;
 }
 
+int is_conn_open(Connection *conn)
+{
+	if ((conn->c_sd == SLAPD_INVALID_SOCKET) || (conn->c_flags & CONN_FLAG_CLOSING)) {
+		return 0;
+	}
+	return 1;
+}
+
 static size_t
 conn_buffered_data_avail_nolock(Connection *conn)
 {
@@ -1150,7 +1158,7 @@ int connection_read_operation(Connection *conn, Operation *op, ber_tag_t *tag, i
 	
 	*tag = LBER_DEFAULT;
 	/* First check to see if we have buffered data from "before" */
-	if ((buffer_data_avail = conn_buffered_data_avail_nolock(conn))) {
+	if (is_conn_open(conn) && (buffer_data_avail = conn_buffered_data_avail_nolock(conn))) {
 		/* If so, use that data first */
 		if ( 0 != get_next_from_buffer( buffer
 				+ conn->c_private->c_buffer_offset,
@@ -1276,6 +1284,12 @@ int connection_read_operation(Connection *conn, Operation *op, ber_tag_t *tag, i
 			waits_done = 0;	/* got some data: reset counter */
 		}
 	}
+
+	if (!is_conn_open(conn)) {
+		ret = CONN_DONE;
+		goto done;
+	}
+
 	/* If there is remaining buffered data, set the flag to tell the caller */
 	if (conn_buffered_data_avail_nolock(conn)) {
 		*remaining_data = 1;
@@ -1783,7 +1797,7 @@ done:
 
 			/* If we're in turbo mode, we keep our reference to the connection alive */
 			/* can't use the more_data var because connection could have changed in another thread */
-			more_data = conn_buffered_data_avail_nolock(conn) ? 1 : 0;
+			more_data = is_conn_open(conn) && conn_buffered_data_avail_nolock(conn) ? 1 : 0;
 			LDAPDebug(LDAP_DEBUG_CONNS,"conn %" NSPRIu64 " check more_data %d thread_turbo_flag %d\n",conn->c_connid,more_data,thread_turbo_flag);
 			if (!more_data) {
 				if (!thread_turbo_flag) {
